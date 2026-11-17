@@ -1,5 +1,6 @@
--- 初始数据：1000 个用户、10 家商户、1 张秒杀券 (库存 100)。可以重复执行。
+-- 初始数据：10000 个用户、10 家商户、1 张秒杀券 (库存 100)。可以重复执行。
 USE flashsale;
+SET SESSION cte_max_recursion_depth = 10000;
 DELETE FROM t_voucher_order;
 DELETE FROM t_voucher_order_naive;
 DELETE FROM t_voucher;
@@ -7,7 +8,7 @@ DELETE FROM t_shop;
 DELETE FROM t_user;
 
 INSERT INTO t_user (id, phone, nickname)
-WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1000)
+WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10000)
 SELECT n, CONCAT('138', LPAD(n, 8, '0')), CONCAT('用户', n) FROM seq;
 
 INSERT INTO t_shop (id, name, address, avg_price, score)

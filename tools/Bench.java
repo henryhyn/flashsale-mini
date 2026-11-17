@@ -6,14 +6,17 @@ import java.util.stream.*;
 
 /**
  * 压测客户端，统计吞吐、延迟和结果分布。两种用法：
- *   java tools/Bench.java <接口路径> <用户数> <每个用户的请求数>
+ *   java tools/Bench.java <接口路径> <用户数> <每个用户的请求数> [并发数]
  *     先让 N 个用户登录拿到 token，再让每个用户同时发 K 个 POST 请求。例：java tools/Bench.java /seckill/1 500 2
+ *     不写并发数时所有请求一齐发出，每个请求一条新连接；请求多到几千个时本机的临时端口会不够用，
+ *     这时写上并发数 (比如 200)，同时在路上的请求不超过它，连接可以复用。
  *   java tools/Bench.java get <接口路径> <请求总数> <并发数>
  *     不登录，发 GET 请求，同时在路上的请求不超过并发数 (并发数等于请求总数时就是一齐发出)。例：java tools/Bench.java get /shop/1 20000 64
  * 需要先启动服务 (默认 http://localhost:8080，可以用环境变量 BASE 修改)。
+ * BASE 写多个地址 (逗号分隔) 时，请求按顺序轮流发给各个实例，同一个用户连点的几个请求会落到不同实例上。
  */
 public class Bench {
-    static final String BASE = System.getenv().getOrDefault("BASE", "http://localhost:8080");
+    static final String[] BASES = System.getenv().getOrDefault("BASE", "http://localhost:8080").split(",");
     static final HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
             .executor(Executors.newVirtualThreadPerTaskExecutor()).build();
 
@@ -24,18 +27,27 @@ public class Bench {
         }
         String path = args[0];
         int users = Integer.parseInt(args[1]), perUser = Integer.parseInt(args[2]);
+        int total = users * perUser;
+        Semaphore inFlight = new Semaphore(args.length > 3 ? Integer.parseInt(args[3]) : total);
 
         List<String> tokens = new ArrayList<>();
+        Semaphore loginSlots = new Semaphore(100);
         try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
             List<Future<String>> fs = new ArrayList<>();
             for (int i = 1; i <= users; i++) {
                 String phone = "138" + String.format("%08d", i);
-                fs.add(pool.submit(() -> body(post("/user/login?phone=" + phone, null)).replaceAll(".*\"data\":\"([^\"]+)\".*", "$1")));
+                fs.add(pool.submit(() -> {
+                    loginSlots.acquire();
+                    try {
+                        return body(post(BASES[0], "/user/login?phone=" + phone, null)).replaceAll(".*\"data\":\"([^\"]+)\".*", "$1");
+                    } finally {
+                        loginSlots.release();
+                    }
+                }));
             }
             for (Future<String> f : fs) tokens.add(f.get());
         }
 
-        int total = users * perUser;
         long[] latency = new long[total];
         String[] results = new String[total];
         CountDownLatch start = new CountDownLatch(1);
@@ -46,17 +58,24 @@ public class Bench {
                 String token = tokens.get(i / perUser);   // 同一个用户的几个请求挨着发，模拟连点
                 pool.submit(() -> {
                     start.await();
+                    inFlight.acquire();
                     long t = System.nanoTime();
-                    String r = body(post(path, token));
+                    try {
+                        String r = body(post(BASES[idx % BASES.length], path, token));
+                        results[idx] = r.contains("\"code\":0") ? "成功" : r.replaceAll(".*\"msg\":\"([^\"]+)\".*", "$1");
+                    } catch (Exception e) {
+                        results[idx] = "连接失败";
+                    } finally {
+                        inFlight.release();
+                    }
                     latency[idx] = System.nanoTime() - t;
-                    results[idx] = r.contains("\"code\":0") ? "成功" : r.replaceAll(".*\"msg\":\"([^\"]+)\".*", "$1");
                     return null;
                 });
             }
             t0 = System.nanoTime();
             start.countDown();
         }
-        report(String.format("请求 %d 个 (%d 个用户，每人 %d 个)", total, users, perUser), t0, latency, results);
+        report(String.format("请求 %d 个 (%d 个用户，每人 %d 个，并发 %s)", total, users, perUser, args.length > 3 ? args[3] : "不限"), t0, latency, results);
     }
 
     static void get(String path, int total, int concurrency) throws Exception {
@@ -73,9 +92,13 @@ public class Bench {
                     inFlight.acquire();
                     try {
                         long t = System.nanoTime();
-                        String r = http.send(HttpRequest.newBuilder(URI.create(BASE + path)).build(), HttpResponse.BodyHandlers.ofString()).body();
+                        try {
+                            String r = http.send(HttpRequest.newBuilder(URI.create(BASES[idx % BASES.length] + path)).build(), HttpResponse.BodyHandlers.ofString()).body();
+                            results[idx] = r.contains("\"code\":0") ? "成功" : r.replaceAll(".*\"msg\":\"([^\"]+)\".*", "$1");
+                        } catch (Exception e) {
+                            results[idx] = "连接失败";
+                        }
                         latency[idx] = System.nanoTime() - t;
-                        results[idx] = r.contains("\"code\":0") ? "成功" : r.replaceAll(".*\"msg\":\"([^\"]+)\".*", "$1");
                     } finally {
                         inFlight.release();
                     }
@@ -98,8 +121,8 @@ public class Bench {
         System.out.println("结果分布：" + dist);
     }
 
-    static HttpResponse<String> post(String path, String token) throws Exception {
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(BASE + path)).POST(HttpRequest.BodyPublishers.noBody());
+    static HttpResponse<String> post(String base, String path, String token) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + path)).POST(HttpRequest.BodyPublishers.noBody());
         if (token != null) b.header("Authorization", token);
         return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }

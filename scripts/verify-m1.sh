@@ -16,7 +16,7 @@ for _ in $(seq 1 60); do curl -s -o /dev/null localhost:8080/user/login && break
 
 for mode in naive safe; do
   "$MYSQL" -u root < sql/data.sql
-  path=/seckill/1; table=t_voucher_order
+  path=/seckill/sync/1; table=t_voucher_order
   if [ "$mode" = naive ]; then path=/seckill/naive/1; table=t_voucher_order_naive; fi
   echo "== $([ "$mode" = naive ] && echo '错误写法：先查后写' || echo '正确写法：条件更新 + 唯一索引')"
   "$JAVA" tools/Bench.java "$path" 500 2
