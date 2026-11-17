@@ -34,10 +34,10 @@ check() {
 }
 
 echo "== 1. 同步版 vs Lua 版：2000 个用户每人连点 3 次，抢 100 张券，200 个并发 (单实例，先预热一轮)"
-for path in /seckill/sync/1 /seckill/1; do prepare 100; "$JAVA" tools/Bench.java $path 2000 3 200 >/dev/null; done
+for path in /seckill/sync/1 /seckill/redis/1; do prepare 100; "$JAVA" tools/Bench.java $path 2000 3 200 >/dev/null; done
 for v in sync lua; do
   prepare 100
-  path=/seckill/sync/1; [ $v = lua ] && path=/seckill/1
+  path=/seckill/sync/1; [ $v = lua ] && path=/seckill/redis/1
   echo "-- $([ $v = sync ] && echo '同步版：数据库条件更新 + 唯一索引' || echo 'Lua 版：Redis 判断资格后再落库')"
   "$JAVA" tools/Bench.java $path 2000 3 200
   check t_voucher_order
@@ -66,6 +66,6 @@ echo
 echo "== 3. 限流：令牌桶每秒 1000 个令牌、容量 200，2000 个用户每人连点 3 次，200 个并发 (单实例，Lua 版)"
 prepare 100
 curl -s -X POST "localhost:8080/lab/seckill/rateLimit?permitsPerSecond=1000&capacity=200" >/dev/null
-"$JAVA" tools/Bench.java /seckill/1 2000 3 200
+"$JAVA" tools/Bench.java /seckill/redis/1 2000 3 200
 curl -s -X POST "localhost:8080/lab/seckill/rateLimit?permitsPerSecond=0" >/dev/null
 check t_voucher_order

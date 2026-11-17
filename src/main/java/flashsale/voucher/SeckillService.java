@@ -40,8 +40,13 @@ public class SeckillService {
      */
     @Transactional
     public long safe(long userId, long voucherId) {
+        return safe(ids.nextId(), userId, voucherId);
+    }
+
+    /** 订单号由调用方生成 (m3 的 Redis 版先在 Redis 里记下订单号，再落库) */
+    @Transactional
+    public long safe(long orderId, long userId, long voucherId) {
         if (mapper.deductStock(voucherId) == 0) throw new BizException(1001, "已抢光");
-        long orderId = ids.nextId();
         try {
             mapper.insertOrder(orderId, userId, voucherId);
         } catch (DuplicateKeyException e) {
@@ -66,9 +71,8 @@ public class SeckillService {
 
     /** Lua 写法的对照实验用 (m3)：资格已经在 Redis 里判断过，这里只扣库存、写演示表 */
     @Transactional
-    public long createNaive(long userId, long voucherId) {
+    public long createNaive(long orderId, long userId, long voucherId) {
         if (mapper.deductStock(voucherId) == 0) throw new BizException(1001, "已抢光");
-        long orderId = ids.nextId();
         mapper.insertNaiveOrder(orderId, userId, voucherId);
         return orderId;
     }

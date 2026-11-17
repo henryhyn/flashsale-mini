@@ -1,5 +1,5 @@
--- 下单失败时回滚 Redis 里的预扣：库存加回去；ARGV[2] 为 1 时把用户从集合里移除
--- KEYS[1] 库存，KEYS[2] 已下单的用户集合；ARGV[1] 用户 id
+-- 把预扣的库存还回去 (落库失败、消息发送失败、订单超时取消)；ARGV[2] 为 1 时把用户从 Hash 里移除，允许他再买
+-- KEYS[1] 库存，KEYS[2] 已下单的用户；ARGV[1] 用户 id
 redis.call('incr', KEYS[1])
-if ARGV[2] == '1' then redis.call('srem', KEYS[2], ARGV[1]) end
+if ARGV[2] == '1' then redis.call('hdel', KEYS[2], ARGV[1]) end
 return 0
